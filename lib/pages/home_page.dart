@@ -1,24 +1,24 @@
-// pages/home_page.dart
-import 'package:contact_list/pages/export_data.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
+import '../services/db.dart';
+import '../services/auth_service.dart';
 import 'add_contact_page.dart';
 import 'categories_screen.dart';
-import '../db/db.dart';
-import 'package:swipe_to/swipe_to.dart';
-import 'dart:io' show Platform;
-import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'login_screen.dart';
 
 class HomePage extends StatefulWidget {
   final String username;
-  final int userId; // ← Ajouté
+  final int userId;
 
   const HomePage({
     Key? key,
     required this.username,
-    required this.userId, // ← requis
+    required this.userId,
   }) : super(key: key);
 
   @override
@@ -28,21 +28,22 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final dbHelper = DbHelper();
   String get username => widget.username;
-  int get userId => widget.userId; // ← Accès facile
-  final TextEditingController _searchController = TextEditingController();
+  int get userId => widget.userId;
 
+  final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _allContacts = [];
   List<Map<String, dynamic>> _filteredContacts = [];
   List<Map<String, dynamic>> _categories = [];
   int? _selectedCategId;
-
-  final Color primaryColor = Color(0xFF263A96);
+  File? _userPhoto;
+  bool _isUserPhotoLoading = false;
 
   @override
   void initState() {
     super.initState();
     _loadContacts();
     _loadCategories();
+    _loadUserPhoto();
     _searchController.addListener(_filterItems);
   }
 
@@ -53,52 +54,86 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  // ------------------ Database Methods ------------------
-  void _loadContacts() async {
-    final data = await dbHelper.getContacts(userId); // ← userId passé ici
-    setState(() {
-      _allContacts = data;
-      _filteredContacts = data;
-    });
+  // -------------------- Logout --------------------
+  void _logout() async {
+    final authService = AuthService();
+    await authService.logout(); // Clear stored user info
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => LoginScreen()),
+      (route) => false,
+    );
   }
 
-  void _loadCategories() async {
-    final data = await dbHelper.getCategs(userId); // ← userId passé ici
-    setState(() {
-      _categories = data;
-    });
+  // -------------------- Load Data --------------------
+  Future<void> _loadContacts() async {
+    final data = await dbHelper.getContacts(userId);
+    if (mounted) {
+      setState(() {
+        _allContacts = data;
+        _filteredContacts = data;
+      });
+    }
   }
 
-  void _deleteContact(int contactId) async {
-    await dbHelper.deleteContact(contactId, userId); // ← userId passé ici
+  Future<void> _loadCategories() async {
+    final data = await dbHelper.getCategs(userId);
+    if (mounted) setState(() => _categories = data);
+  }
+
+  Future<void> _loadUserPhoto() async {
+    if (!mounted) return;
+    setState(() => _isUserPhotoLoading = true);
+    try {
+      final user = await dbHelper.getUserById(userId);
+      if (user != null && user.photoPath != null && user.photoPath!.isNotEmpty) {
+        final file = File(user.photoPath!);
+        if (await file.exists()) {
+          setState(() => _userPhoto = file);
+        }
+      }
+    } catch (_) {
+      setState(() => _userPhoto = null);
+    } finally {
+      if (mounted) setState(() => _isUserPhotoLoading = false);
+    }
+  }
+
+  Future<void> _deleteContact(int contactId) async {
+    await dbHelper.deleteContact(contactId, userId);
     _loadContacts();
+    _filterItems();
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Contact deleted')));
   }
 
-  // ------------------ Filtering ------------------
   void _filterItems() {
     final query = _searchController.text.toLowerCase();
     setState(() {
       _filteredContacts = _allContacts.where((contact) {
-        final fname = contact['firstname']?.toString().toLowerCase() ?? '';
-        final lname = contact['lastname']?.toString().toLowerCase() ?? '';
-        final categ = contact['categ_name']?.toString().toLowerCase() ?? '';
-        final phone = contact['phone']?.toString().toLowerCase() ?? '';
-
-        final matchesSearch =
-            fname.contains(query) ||
-            lname.contains(query) ||
-            categ.contains(query) ||
-            phone.contains(query);
-
-        final matchesCategory =
-            _selectedCategId == null || contact['categ_id'] == _selectedCategId;
-
+        final fname = contact['firstname']?.toLowerCase() ?? '';
+        final lname = contact['lastname']?.toLowerCase() ?? '';
+        final phone = contact['phone']?.toLowerCase() ?? '';
+        final categ = contact['categ_name']?.toLowerCase() ?? '';
+        final matchesSearch = fname.contains(query) || lname.contains(query) || phone.contains(query) || categ.contains(query);
+        final matchesCategory = _selectedCategId == null || contact['categ_id'] == _selectedCategId;
         return matchesSearch && matchesCategory;
       }).toList();
     });
   }
 
-  // ------------------ Widgets ------------------
+  Future<void> _makePhoneCall(String phoneNumber) async {
+    String cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d\+]'), '');
+    if (cleanNumber.isEmpty) return;
+    if (Platform.isAndroid) {
+      await FlutterPhoneDirectCaller.callNumber(phoneNumber);
+    } else {
+      await launchUrl(Uri(scheme: 'tel', path: cleanNumber));
+    }
+  }
+
+  // -------------------- Widgets --------------------
   Widget _buildCategoryChips() {
     return SizedBox(
       height: 50,
@@ -106,294 +141,234 @@ class _HomePageState extends State<HomePage> {
         scrollDirection: Axis.horizontal,
         children: [
           ChoiceChip(
-            label: Text("All"),
+            label: const Text("All"),
             selected: _selectedCategId == null,
-            selectedColor: primaryColor.withOpacity(0.2),
+            selectedColor: Theme.of(context).primaryColor.withOpacity(0.2),
             labelStyle: TextStyle(
-              color: _selectedCategId == null ? primaryColor : Colors.black,
-            ),
+                color: _selectedCategId == null ? Theme.of(context).primaryColor : Colors.black),
             onSelected: (_) {
               setState(() => _selectedCategId = null);
               _filterItems();
             },
           ),
-          ..._categories.map((categ) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: ChoiceChip(
-                label: Text(categ['categ_name']),
-                selected: _selectedCategId == categ['categ_id'],
-                selectedColor: primaryColor.withOpacity(0.2),
-                labelStyle: TextStyle(
-                  color: _selectedCategId == categ['categ_id']
-                      ? primaryColor
-                      : Colors.black,
+          ..._categories.map((c) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: ChoiceChip(
+                  label: Text(c['categ_name']),
+                  selected: _selectedCategId == c['categ_id'],
+                  selectedColor: Theme.of(context).primaryColor.withOpacity(0.2),
+                  labelStyle: TextStyle(
+                      color: _selectedCategId == c['categ_id'] ? Theme.of(context).primaryColor : Colors.black),
+                  onSelected: (_) {
+                    setState(() => _selectedCategId = c['categ_id']);
+                    _filterItems();
+                  },
                 ),
-                onSelected: (_) {
-                  setState(() => _selectedCategId = categ['categ_id']);
-                  _filterItems();
-                },
-              ),
-            );
-          }).toList(),
+              ))
         ],
       ),
     );
   }
 
-  Widget _buildSearchBar() {
-    return TextField(
-      controller: _searchController,
-      decoration: InputDecoration(
-        hintText: "Search by name, phone, or category",
-        prefixIcon: Icon(Icons.search, color: primaryColor),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: primaryColor),
-        ),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
-
-  // Future<void> _makePhoneCall(String phoneNumber) async {
-  //   // Nettoyer le numéro
-  //   String cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d\+]'), '');
-  //   if (cleanNumber.isEmpty) {
-  //     ScaffoldMessenger.of(
-  //       context,
-  //     ).showSnackBar(const SnackBar(content: Text("Numéro invalide")));
-  //     return;
-  //   }
-
-  //   final Uri uri = Uri(scheme: 'tel', path: cleanNumber);
-  //   if (await canLaunchUrl(uri)) {
-  //     await launchUrl(
-  //       uri,
-  //       mode: LaunchMode.externalApplication, // ← Important !
-  //     );
-  //   } else {
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       const SnackBar(
-  //         content: Text("Impossible d'ouvrir l'application Téléphone"),
-  //       ),
-  //     );
-  //   }
-  // }
-
-  Future<void> _makePhoneCall(String phoneNumber) async {
-    String cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d\+]'), '');
-    if (cleanNumber.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Numéro invalide")));
-      return;
-    }
-
-    if (Platform.isAndroid) {
-      // ✅ ANDROID : Appel direct si permission accordée
-      // var status = await Permission.phone.request(); // demande directement
-      bool? res = await FlutterPhoneDirectCaller.callNumber(phoneNumber);
-
-      if (res == false) {
-        print('Erreur lors du lancement de l\'appel');
-      }
-    } else {
-      // ✅ iOS : ouvrir l'appli Téléphone (seule option)
-      await launchUrl(Uri(scheme: 'tel', path: cleanNumber));
-    }
-  }
-
   Widget _buildContactCard(Map<String, dynamic> contact) {
-    return SwipeTo(
-      // Action à gauche = Édition
-      onLeftSwipe: (details) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                AddContactPage(contact: contact, userId: userId),
-          ),
-        ).then((_) {
-          _loadContacts();
-          _filterItems();
-        });
+    return GestureDetector(
+      onLongPress: () {
+        showModalBottomSheet(
+            context: context,
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+            builder: (ctx) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.edit, color: Colors.blue),
+                      title: const Text("Edit"),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) =>
+                                  AddContactPage(contact: contact, userId: userId)),
+                        ).then((_) => _loadContacts());
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.delete, color: Colors.red),
+                      title: const Text("Delete"),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _deleteContact(contact['contact_id']);
+                      },
+                    ),
+                  ],
+                ));
       },
-      // Action à droite = Suppression
-      onRightSwipe: (details) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text("Delete Contact"),
-            content: Text("Are you sure you want to delete this contact?"),
-            actions: [
-              TextButton(
-                child: Text("Cancel"),
-                onPressed: () => Navigator.pop(ctx),
-              ),
-              TextButton(
-                child: Text("Delete", style: TextStyle(color: Colors.red)),
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _deleteContact(contact['contact_id']);
-                },
-              ),
-            ],
-          ),
-        );
-      },
-      // Optionnel : icônes ou widgets pendant le swipe
-      iconOnLeftSwipe: Icons.edit,
-      leftSwipeWidget: Icon(Icons.edit, color: Colors.blue),
-      iconOnRightSwipe: Icons.delete,
-      rightSwipeWidget: Icon(Icons.delete, color: Colors.red),
-
-      // Sensibilité (optionnel)
-      swipeSensitivity: 10,
-
-      // Le widget enfant (ta carte)
       child: Card(
-        color: Colors.white,
         elevation: 3,
-        shadowColor: Colors.grey.withOpacity(0.3),
-        margin: EdgeInsets.symmetric(vertical: 6),
+        margin: const EdgeInsets.symmetric(vertical: 6),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: ListTile(
-          trailing: contact['phone'] != null
-              ? IconButton(
-                  icon: Icon(Icons.call, color: Colors.green),
-                  onPressed: () => _makePhoneCall(contact['phone']),
-                )
-              : null,
-          contentPadding: EdgeInsets.all(10),
           leading: CircleAvatar(
-            radius: 28,
-            child: Text(
-              "${contact['firstname'][0]}${contact['lastname'][0]}",
+            radius: 24,
+            backgroundColor: Colors.grey[200],
+            backgroundImage: contact['photo'] != null && contact['photo'].isNotEmpty
+                ? FileImage(File(contact['photo']))
+                : null,
+            child: contact['photo'] == null || contact['photo'].isEmpty
+                ? Icon(Icons.person, size: 28, color: Colors.grey[600])
+                : null,
+          ),
+          title: Text("${contact['firstname']} ${contact['lastname']}",
               style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            backgroundColor: primaryColor,
-          ),
-          title: Text(
-            "${contact['firstname']} ${contact['lastname']}",
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: primaryColor,
-            ),
-          ),
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).primaryColor)),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (contact['phone'] != null)
-                Text(
-                  "📞 ${contact['phone']}",
-                  style: TextStyle(color: Colors.black87),
-                ),
-              Text(
-                "📂 ${contact['categ_name'] ?? 'No Category'}",
-                style: TextStyle(color: Colors.grey[700]),
-              ),
+                Text("📞 ${contact['phone']}", style: TextStyle(color: Colors.black87)),
+              Text("📂 ${contact['categ_name'] ?? 'No Category'}",
+                  style: TextStyle(color: Colors.grey[700])),
             ],
           ),
-          // Plus de trailing ici → les actions sont gérées par le swipe
+          trailing: contact['phone'] != null
+              ? IconButton(
+                  icon: const Icon(Icons.call, color: Colors.green),
+                  onPressed: () => _makePhoneCall(contact['phone']),
+                )
+              : null,
         ),
       ),
     );
   }
 
   Widget _buildContactList() {
-    if (_filteredContacts.isEmpty)
-      return Center(child: Text("No contacts found"));
-
+    if (_filteredContacts.isEmpty) return const Center(child: Text("No contacts found"));
     return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
       itemCount: _filteredContacts.length,
-      itemBuilder: (context, index) =>
-          _buildContactCard(_filteredContacts[index]),
+      itemBuilder: (context, index) => _buildContactCard(_filteredContacts[index]),
     );
   }
 
-  // ------------------ Build Scaffold ------------------
+  // -------------------- Build Scaffold --------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Text(
-          'Bonjour, $username', // ← Affiche le username
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: Colors.white,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: primaryColor,
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white.withOpacity(0.2),
-              shape: CircleBorder(),
-              padding: EdgeInsets.all(8),
-            ),
-            child: Icon(Icons.upload, color: Colors.white),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => ExportDbPage()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(12.0),
+      body: SafeArea(
         child: Column(
           children: [
-            _buildCategoryChips(),
-            SizedBox(height: 10),
-            _buildSearchBar(),
-            SizedBox(height: 12),
-            Expanded(child: _buildContactList()),
-            SizedBox(height: 10),
-            ElevatedButton.icon(
-              icon: Icon(Icons.category, color: Colors.white),
-              style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
-              label: Text(
-                'Manage Categories',
-                style: TextStyle(color: Colors.white),
+            // -------------------- Custom Top Bar --------------------
+            Container(
+              margin: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), spreadRadius: 2, blurRadius: 4, offset: const Offset(0, 2))],
               ),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        CategoriesScreen(userId: userId), // ← userId passé ici
+              child: Row(
+                children: [
+                  _isUserPhotoLoading
+                      ? const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(Colors.white))
+                      : CircleAvatar(
+                          radius: 24,
+                          backgroundColor: Colors.white.withOpacity(0.2),
+                          backgroundImage: _userPhoto != null ? FileImage(_userPhoto!) : null,
+                          child: _userPhoto == null
+                              ? const Icon(Icons.person, size: 28, color: Colors.white)
+                              : null,
+                        ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Hello, $username',
+                            style: const TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                        const SizedBox(height: 4),
+                        const Text('Welcome back!',
+                            style: TextStyle(fontSize: 14, color: Colors.white70)),
+                      ],
+                    ),
                   ),
-                ).then((_) => _loadCategories());
-              },
+                  IconButton(
+                    icon: const Icon(Icons.logout, color: Colors.white),
+                    onPressed: _logout,
+                    tooltip: 'Logout',
+                  ),
+                ],
+              ),
+            ),
+
+            // -------------------- Body --------------------
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: "Search contacts...",
+                        prefixIcon: const Icon(Icons.search),
+                        filled: true,
+                        fillColor: Colors.grey[200],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildCategoryChips(),
+                    const SizedBox(height: 8),
+                    _buildContactList(),
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: primaryColor,
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) =>
-                  AddContactPage(userId: userId), // ← userId passé ici
-            ),
-          ).then((_) {
-            _loadContacts();
-            _filterItems();
-          });
-        },
-        child: Icon(Icons.add, color: Colors.white),
+
+      // -------------------- Floating Buttons --------------------
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton(
+            heroTag: "manageCategories",
+            backgroundColor: Theme.of(context).primaryColor,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => CategoriesScreen(userId: userId)),
+              ).then((_) => _loadCategories());
+            },
+            child: const Icon(Icons.category, color: Colors.white),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: "addContact",
+            backgroundColor: Theme.of(context).primaryColor,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => AddContactPage(userId: userId)),
+              ).then((_) {
+                _loadContacts();
+                _filterItems();
+              });
+            },
+            child: const Icon(Icons.add, color: Colors.white),
+          ),
+        ],
       ),
     );
   }

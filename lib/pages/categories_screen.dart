@@ -1,6 +1,6 @@
 // pages/categories_screen.dart
 import 'package:flutter/material.dart';
-import '../db/db.dart';
+import '../services/db.dart';
 
 class CategoriesScreen extends StatefulWidget {
   final int userId; // ← Ajouté : obligatoire
@@ -19,7 +19,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   final _categNameController = TextEditingController();
   List<Map<String, dynamic>> _categories = [];
 
-  final Color primaryColor = Color(0xFF263A96);
+  // Using theme's primary color
 
   @override
   void initState() {
@@ -75,7 +75,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
             onPressed: () => Navigator.pop(ctx),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+            ),
             child: Text("Save", style: TextStyle(color: Colors.white)),
             onPressed: () async {
               String newName = editController.text.trim();
@@ -111,7 +113,9 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
           ),
           SizedBox(width: 8),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).primaryColor,
+            ),
             onPressed: _addCategory,
             child: Icon(Icons.add, color: Colors.white),
           ),
@@ -130,7 +134,10 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
       child: ListTile(
         title: Text(
           item['categ_name'],
-          style: TextStyle(fontWeight: FontWeight.bold, color: primaryColor),
+          style: TextStyle(
+            fontWeight: FontWeight.bold, 
+            color: Theme.of(context).primaryColor,
+          ),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -163,24 +170,52 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Text(
-          'Categories',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            fontSize: 20,
-          ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Custom Top Bar
+            Container(
+              margin: const EdgeInsets.all(12.0),
+              padding: const EdgeInsets.all(16.0),
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 2,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Categories',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+
+            // Add Category Row
+            _buildAddCategoryRow(),
+
+            // Category List
+            Expanded(child: _buildCategoryList()),
+          ],
         ),
-        backgroundColor: primaryColor,
-        centerTitle: true,
-      ),
-      body: Column(
-        children: [
-          _buildAddCategoryRow(),
-          Expanded(child: _buildCategoryList()),
-        ],
       ),
     );
   }
+
 }

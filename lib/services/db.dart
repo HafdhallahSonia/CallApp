@@ -61,10 +61,11 @@ class DbHelper {
   Future<void> _createDb(Database db, int version) async {
     // 🔹 Table users
     await db.execute('''
-      CREATE TABLE users(
+      CREATE TABLE IF NOT EXISTS users(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
-        passwordHash TEXT NOT NULL
+        passwordHash TEXT NOT NULL,
+        photo TEXT
       )
     ''');
 

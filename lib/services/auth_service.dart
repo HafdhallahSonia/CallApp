@@ -1,6 +1,6 @@
 // services/auth_service.dart
 import 'dart:convert';
-import 'package:contact_list/db/db.dart';
+import 'package:contact_list/services/db.dart';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
@@ -13,7 +13,7 @@ class AuthService {
     return sha256.convert(utf8.encode(password)).toString();
   }
 
-  Future<bool> login(
+  Future<Map<String, dynamic>> login(
     String username,
     String password, {
     bool rememberMe = false,
@@ -31,9 +31,9 @@ class AuthService {
         await prefs.remove(_rememberedUserIdKey);
         await prefs.remove(_rememberedUsernameKey);
       }
-      return true;
+      return {'success': true, 'userId': user.id};
     }
-    return false;
+    return {'success': false, 'userId': null};
   }
 
   Future<int?> getRememberedUserId() async {
@@ -52,15 +52,21 @@ class AuthService {
     await prefs.remove(_rememberedUsernameKey);
   }
 
-  // Pour inscription (utile pour tests)
-  Future<bool> register(String username, String password) async {
+  // Register a new user with optional photo
+  Future<bool> register(String username, String password, {String? photoPath}) async {
     final hashed = _hashPassword(password);
-    final user = User(username: username, passwordHash: hashed);
+    final user = User(
+      username: username, 
+      passwordHash: hashed,
+      photoPath: photoPath,
+    );
     final dbHelper = DbHelper();
 
-    if (await dbHelper.insertUser(user) > 0) {
-      return true;
-    } else {
+    try {
+      final userId = await dbHelper.insertUser(user);
+      return userId > 0;
+    } catch (e) {
+      print('Error during registration: $e');
       return false;
     }
   }
