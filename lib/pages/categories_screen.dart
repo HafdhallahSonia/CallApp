@@ -1,13 +1,12 @@
-// pages/categories_screen.dart
 import 'package:flutter/material.dart';
 import '../services/db.dart';
 
 class CategoriesScreen extends StatefulWidget {
-  final int userId; // ← Ajouté : obligatoire
+  final int userId; 
 
   const CategoriesScreen({
     Key? key,
-    required this.userId, // ← requis
+    required this.userId,
   }) : super(key: key);
 
   @override

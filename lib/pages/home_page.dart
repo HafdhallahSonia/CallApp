@@ -7,7 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
 import '../services/db.dart';
 import '../services/auth_service.dart';
-import 'add_contact_page.dart';
+import 'addContact_screen.dart';
 import 'categories_screen.dart';
 import 'login_screen.dart';
 
