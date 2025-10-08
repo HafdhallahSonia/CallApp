@@ -170,6 +170,93 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _showContactDetails(Map<String, dynamic> contact) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Center(
+            child: Column(
+              children: [
+                CircleAvatar(
+                  radius: 40,
+                  backgroundColor: Colors.grey[200],
+                  backgroundImage: contact['photo'] != null && contact['photo'].isNotEmpty
+                      ? FileImage(File(contact['photo']))
+                      : null,
+                  child: contact['photo'] == null || contact['photo'].isEmpty
+                      ? Icon(Icons.person, size: 40, color: Colors.grey[600])
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  "${contact['firstname']} ${contact['lastname']}",
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                if (contact['categ_name'] != null) Text(
+                  contact['categ_name'],
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (contact['phone'] != null) ...[
+                  const Divider(),
+                  const Text('Contact Information', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    leading: const Icon(Icons.phone, color: Colors.green),
+                    title: Text(contact['phone']),
+                    onTap: () => _makePhoneCall(contact['phone']),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      label: const Text('Edit'),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AddContactPage(contact: contact, userId: userId),
+                          ),
+                        ).then((_) => _loadContacts());
+                      },
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      label: const Text('Delete'),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _deleteContact(contact['contact_id']);
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildContactCard(Map<String, dynamic> contact) {
     return GestureDetector(
       onLongPress: () {
@@ -209,15 +296,19 @@ class _HomePageState extends State<HomePage> {
         margin: const EdgeInsets.symmetric(vertical: 6),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: ListTile(
-          leading: CircleAvatar(
-            radius: 24,
-            backgroundColor: Colors.grey[200],
-            backgroundImage: contact['photo'] != null && contact['photo'].isNotEmpty
-                ? FileImage(File(contact['photo']))
-                : null,
-            child: contact['photo'] == null || contact['photo'].isEmpty
-                ? Icon(Icons.person, size: 28, color: Colors.grey[600])
-                : null,
+          onTap: () => _showContactDetails(contact),
+          leading: GestureDetector(
+            onTap: () => _showContactDetails(contact),
+            child: CircleAvatar(
+              radius: 24,
+              backgroundColor: Colors.grey[200],
+              backgroundImage: contact['photo'] != null && contact['photo'].isNotEmpty
+                  ? FileImage(File(contact['photo']))
+                  : null,
+              child: contact['photo'] == null || contact['photo'].isEmpty
+                  ? Icon(Icons.person, size: 28, color: Colors.grey[600])
+                  : null,
+            ),
           ),
           title: Text("${contact['firstname']} ${contact['lastname']}",
               style: TextStyle(
@@ -228,7 +319,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               if (contact['phone'] != null)
                 Text("📞 ${contact['phone']}", style: TextStyle(color: Colors.black87)),
-              Text("📂 ${contact['categ_name'] ?? 'No Category'}",
+              Text("👤 ${contact['categ_name'] ?? 'No Category'}",
                   style: TextStyle(color: Colors.grey[700])),
             ],
           ),
