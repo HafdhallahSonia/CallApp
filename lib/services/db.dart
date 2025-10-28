@@ -193,7 +193,7 @@ class DbHelper {
     final db = await database;
     return db.rawQuery(
       '''
-      SELECT 
+      SELECT DISTINCT
         contact.contact_id,
         contact.firstname,
         contact.lastname,
@@ -205,6 +205,7 @@ class DbHelper {
       FROM contact
       LEFT JOIN category ON contact.categ_id = category.categ_id
       WHERE contact.user_id = ?
+      ORDER BY contact.firstname, contact.lastname
     ''',
       [userId],
     );

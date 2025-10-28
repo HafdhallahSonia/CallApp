@@ -11,6 +11,8 @@ android {
     ndkVersion = "27.0.12077973"
 
     compileOptions {
+        // Enable core library desugaring
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -28,6 +30,15 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    dependencies {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22") {
+            because("Using Kotlin 1.8.22 with Gradle version, which is newer than the Kotlin version used by Flutter (1.8.10)")
+        }
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22")
+        // Core library desugaring
+        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
     }
 
     buildTypes {

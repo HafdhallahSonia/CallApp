@@ -10,6 +10,10 @@ import '../services/auth_service.dart';
 import 'addContact_screen.dart';
 import 'categories_screen.dart';
 import 'login_screen.dart';
+import 'package:another_telephony/telephony.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
 
 class HomePage extends StatefulWidget {
   final String username;
@@ -38,6 +42,9 @@ class _HomePageState extends State<HomePage> {
   File? _userPhoto;
   bool _isUserPhotoLoading = false;
 
+  final Telephony telephony = Telephony.instance;
+  final FlutterLocalNotificationsPlugin notificationsPlugin = FlutterLocalNotificationsPlugin();
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +52,9 @@ class _HomePageState extends State<HomePage> {
     _loadCategories();
     _loadUserPhoto();
     _searchController.addListener(_filterItems);
+    _initPermissions();
+    _initNotifications();
+    _listenForSms();
   }
 
   @override
@@ -76,30 +86,51 @@ class _HomePageState extends State<HomePage> {
       });
     }
   }
-
+  // -------------------- Load Categories --------------------
   Future<void> _loadCategories() async {
     final data = await dbHelper.getCategs(userId);
     if (mounted) setState(() => _categories = data);
   }
-
+  // -------------------- Load User Photo --------------------
   Future<void> _loadUserPhoto() async {
     if (!mounted) return;
-    setState(() => _isUserPhotoLoading = true);
+    
+    if (mounted) {
+      setState(() => _isUserPhotoLoading = true);
+    }
+    
     try {
       final user = await dbHelper.getUserById(userId);
-      if (user != null && user.photoPath != null && user.photoPath!.isNotEmpty) {
-        final file = File(user.photoPath!);
-        if (await file.exists()) {
-          setState(() => _userPhoto = file);
+      if (user?.photoPath?.isNotEmpty == true) {
+        try {
+          final file = File(user!.photoPath!);
+          final fileExists = await file.exists();
+          if (fileExists && mounted) {
+            setState(() => _userPhoto = file);
+          } else if (mounted) {
+            setState(() => _userPhoto = null);
+          }
+        } catch (e) {
+          if (mounted) {
+            setState(() => _userPhoto = null);
+          }
         }
+      } else if (mounted) {
+        setState(() => _userPhoto = null);
       }
-    } catch (_) {
-      setState(() => _userPhoto = null);
+    } catch (e) {
+      print('Error loading user photo: $e');
+      if (mounted) {
+        setState(() => _userPhoto = null);
+      }
     } finally {
-      if (mounted) setState(() => _isUserPhotoLoading = false);
+      if (mounted) {
+        setState(() => _isUserPhotoLoading = false);
+      }
     }
   }
 
+// -------------------- Delete Contact --------------------
   Future<void> _deleteContact(int contactId) async {
     await dbHelper.deleteContact(contactId, userId);
     _loadContacts();
@@ -108,6 +139,7 @@ class _HomePageState extends State<HomePage> {
         .showSnackBar(const SnackBar(content: Text('Contact deleted')));
   }
 
+  //---------Filter Items-----------
   void _filterItems() {
     final query = _searchController.text.toLowerCase();
     setState(() {
@@ -123,6 +155,7 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  //---------Make Phone Call-----------
   Future<void> _makePhoneCall(String phoneNumber) async {
     String cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d\+]'), '');
     if (cleanNumber.isEmpty) return;
@@ -130,6 +163,158 @@ class _HomePageState extends State<HomePage> {
       await FlutterPhoneDirectCaller.callNumber(phoneNumber);
     } else {
       await launchUrl(Uri(scheme: 'tel', path: cleanNumber));
+    }
+  }
+
+  Future<void> _initPermissions() async {
+    await telephony.requestPhoneAndSmsPermissions;
+    await Permission.location.request();
+  }
+ 
+  //---------Initialize Notifications-----------
+  Future<void> _initNotifications() async {
+    // 1️⃣ Initialize plugin settings
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings();
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+   await notificationsPlugin.initialize(
+    initSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) async {
+      final payload = response.payload;
+      if (payload != null) {
+        final uri = Uri.tryParse(payload);
+        if (uri != null) {
+          if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+            print('Could not launch: $uri');
+          }
+        }
+      }
+    },
+  );
+
+
+    // 2️⃣ Request notification permission (Android 13+ and iOS)
+    if (Platform.isAndroid) {
+      final granted = await Permission.notification.request();
+      print('Notification permission granted: $granted');
+    } else if (Platform.isIOS) {
+      final iosPlugin = notificationsPlugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+      if (iosPlugin != null) {
+        await iosPlugin.requestPermissions(alert: true, badge: true, sound: true);
+      }
+    }
+  }
+
+
+  // Ensure notification permission on Android 13+
+  Future<bool> _ensureNotificationPermission() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.notification.status;
+      if (!status.isGranted) {
+        final granted = await Permission.notification.request();
+        return granted.isGranted;
+      }
+      return true;
+    } else if (Platform.isIOS) {
+      final iosPlugin = notificationsPlugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+      if (iosPlugin != null) {
+        final granted = await iosPlugin.requestPermissions(alert: true, badge: true, sound: true);
+        return granted ?? false;
+      }
+      return false;
+    }
+    return true; // default for other platforms
+  }
+
+
+  //---------Listen for SMS-----------
+  void _listenForSms() {
+    telephony.listenIncomingSms(
+      onNewMessage: (SmsMessage message) async {
+        try {
+          final body = message.body?.toLowerCase() ?? '';
+          final sender = message.address ?? '';
+
+          // ----------- Handle Location Request -----------
+          if (body.contains("send your location")) {
+            var status = await Permission.location.status;
+            if (!status.isGranted) {
+              status = await Permission.location.request();
+            }
+
+            if (status.isGranted) {
+              try {
+                Position pos = await Geolocator.getCurrentPosition(
+                  desiredAccuracy: LocationAccuracy.high,
+                ).timeout(const Duration(seconds: 10));
+
+                String reply = "My location: ${pos.latitude},${pos.longitude}";
+                await telephony.sendSms(to: sender, message: reply);
+              } catch (e) {
+                print('Error getting location: $e');
+                await telephony.sendSms(
+                  to: sender,
+                  message: "Error: Could not determine location. Please check location services.",
+                );
+              }
+            } else {
+              await telephony.sendSms(
+                to: sender,
+                message: "Error: Location permission not granted.",
+              );
+            }
+          }
+
+          // ----------- Handle Location Response -----------
+          else if (body.contains("my location:")) {
+            await _showLocationNotification(body); // Use helper
+          }
+
+        } catch (e) {
+          print('Error in SMS listener: $e');
+        }
+      },
+      listenInBackground: false, // set false to prevent background crash
+    );
+  }
+
+  //---------Show Location Notification-----------
+  Future<void> _showLocationNotification(String message) async {
+    final regex = RegExp(r'(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)');
+    final match = regex.firstMatch(message);
+
+    if (match != null) {
+      final lat = match.group(1);
+      final lon = match.group(2);
+
+      if (lat != null && lon != null) {
+        final androidUri = Uri.parse('geo:$lat,$lon?q=$lat,$lon(Label)');
+        final webUri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lon'); // fallback web
+
+        final androidDetails = AndroidNotificationDetails(
+          'location_channel',
+          'Location Notifications',
+          channelDescription: 'Notifications for received locations',
+          importance: Importance.max,
+          priority: Priority.high,
+        );
+
+        const iosDetails = DarwinNotificationDetails();
+
+        await notificationsPlugin.show(
+          0,
+          'Location Received',
+          'Tap to open in Google Maps',
+          NotificationDetails(android: androidDetails, iOS: iosDetails),
+          payload: Platform.isAndroid ? androidUri.toString() : webUri.toString(),
+        );
+      }
     }
   }
 
@@ -220,6 +405,7 @@ class _HomePageState extends State<HomePage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
+                    // ---------------- Edit Button ----------------
                     TextButton.icon(
                       icon: const Icon(Icons.edit, color: Colors.blue),
                       label: const Text('Edit'),
@@ -233,6 +419,7 @@ class _HomePageState extends State<HomePage> {
                         ).then((_) => _loadContacts());
                       },
                     ),
+                    // ---------------- Delete Button ----------------
                     TextButton.icon(
                       icon: const Icon(Icons.delete, color: Colors.red),
                       label: const Text('Delete'),
@@ -264,7 +451,7 @@ class _HomePageState extends State<HomePage> {
             context: context,
             shape: const RoundedRectangleBorder(
                 borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-            builder: (ctx) => Column(
+                builder: (ctx) => Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     ListTile(
@@ -310,10 +497,15 @@ class _HomePageState extends State<HomePage> {
                   : null,
             ),
           ),
-          title: Text("${contact['firstname']} ${contact['lastname']}",
-              style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).primaryColor)),
+          title: Text(
+            "${contact['firstname'] ?? ''} ${contact['lastname'] ?? ''}".trim().isNotEmpty
+                ? "${contact['firstname'] ?? ''} ${contact['lastname'] ?? ''}".trim()
+                : 'Unnamed Contact',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).primaryColor,
+            ),
+          ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -323,16 +515,35 @@ class _HomePageState extends State<HomePage> {
                   style: TextStyle(color: Colors.grey[700])),
             ],
           ),
-          trailing: contact['phone'] != null
-              ? IconButton(
-                  icon: const Icon(Icons.call, color: Colors.green),
-                  onPressed: () => _makePhoneCall(contact['phone']),
-                )
-              : null,
+          trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Phone Call Button
+            if (contact['phone'] != null)
+              IconButton(
+                icon: const Icon(Icons.call, color: Colors.green),
+                onPressed: () => _makePhoneCall(contact['phone']),
+              ),
+              // Request Location Button
+              if (contact['phone'] != null)
+                IconButton(
+                  icon: const Icon(Icons.location_on, color: Colors.orange),
+                  onPressed: () async {
+                    await telephony.sendSms(
+                      to: contact['phone'],
+                      message: "send your location",
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Location request sent")),
+                    );
+                  },
+                ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildContactList() {
     if (_filteredContacts.isEmpty) return const Center(child: Text("No contacts found"));
