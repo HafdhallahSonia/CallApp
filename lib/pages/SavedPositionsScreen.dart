@@ -6,7 +6,6 @@ import '../services/db.dart';
 import 'map_screen.dart';
 import 'package:another_telephony/telephony.dart';
 
-
 class SavedPositionsScreen extends StatefulWidget {
   final int userId;
 
@@ -18,6 +17,8 @@ class SavedPositionsScreen extends StatefulWidget {
 
 class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
   final DbHelper dbHelper = DbHelper();
+  final Telephony telephony = Telephony.instance;
+
   List<Map<String, dynamic>> _contacts = [];
   List<Map<String, dynamic>> _filteredContacts = [];
 
@@ -27,7 +28,6 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
 
   final TextEditingController _contactSearchController = TextEditingController();
   final TextEditingController _positionSearchController = TextEditingController();
-  final Telephony telephony = Telephony.instance;
 
   @override
   void initState() {
@@ -98,39 +98,46 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
 
   void _filterPositions() {
     final query = _positionSearchController.text.toLowerCase();
-      setState(() {
-        _filteredPositions = _positions.where((pos) {
-          final pseudo = pos['pseudo']?.toLowerCase() ?? '';
-          final numero = pos['numero']?.toLowerCase() ?? '';
-          return pseudo.contains(query) || numero.contains(query);
-        }).toList();
-      });
-    }
+    setState(() {
+      _filteredPositions = _positions.where((pos) {
+        final pseudo = pos['pseudo']?.toLowerCase() ?? '';
+        final numero = pos['numero']?.toLowerCase() ?? '';
+        return pseudo.contains(query) || numero.contains(query);
+      }).toList();
+    });
+  }
 
-    Future<void> _deletePosition(int idPosition) async {
-      final url = Uri.parse("http://10.149.166.230/callapp/delete_position.php");
-      try {
-        final response = await http.post(url, body: {"idPosition": idPosition.toString()});
-        final data = json.decode(response.body);
+  // ------------------ Delete position ------------------
+  Future<void> _deletePosition(int idPosition) async {
+    final url = Uri.parse("http://10.149.166.230/callapp/delete_position.php");
+    try {
+      final response = await http.post(
+        url,
+        body: {"idPosition": idPosition.toString()},
+      );
 
-        if (data['success'] == 1) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Position deleted")),
-          );
-          _fetchPositions();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Error: ${data['message']}")),
-          );
-        }
-      } catch (e) {
+      print("Delete response: ${response.body}");
+
+      final data = json.decode(response.body);
+
+      if (data['success'] == 1) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Request failed: $e")),
+          const SnackBar(content: Text("Position deleted")),
+        );
+        await _fetchPositions(); // Refresh positions
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: ${data['message']}")),
         );
       }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Request failed: $e")),
+      );
     }
+  }
 
-    // ------------------ Share position ------------------
+  // ------------------ Share position ------------------
   void _showShareDialog(double lat, double lon) {
     showDialog(
       context: context,
@@ -164,7 +171,6 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
                             final message =
                                 "Location: https://www.google.com/maps/search/?api=1&query=$lat,$lon";
 
-                            // Send SMS directly using another_telephony
                             await telephony.sendSms(
                               to: numero,
                               message: message,
@@ -191,7 +197,6 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
       ),
     );
   }
-
 
   // ------------------ Build UI ------------------
   @override
@@ -305,7 +310,14 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
                                           ),
                                         );
                                         if (confirmed == true) {
-                                          _deletePosition(pos['idPosition']);
+                                          final id = int.tryParse(pos['idPosition'].toString());
+                                          if (id != null) {
+                                            _deletePosition(id);
+                                          } else {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              const SnackBar(content: Text("Invalid position ID")),
+                                            );
+                                          }
                                         }
                                       },
                                     ),
