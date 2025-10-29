@@ -13,6 +13,8 @@ import 'login_screen.dart';
 import 'package:another_telephony/telephony.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'map_screen.dart';
+
 
 
 class HomePage extends StatefulWidget {
@@ -172,7 +174,7 @@ class _HomePageState extends State<HomePage> {
   }
  
   //---------Initialize Notifications-----------
-  Future<void> _initNotifications() async {
+  /*Future<void> _initNotifications() async {
     // 1️⃣ Initialize plugin settings
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings();
@@ -181,20 +183,20 @@ class _HomePageState extends State<HomePage> {
       iOS: iosSettings,
     );
 
-   await notificationsPlugin.initialize(
-    initSettings,
-    onDidReceiveNotificationResponse: (NotificationResponse response) async {
-      final payload = response.payload;
-      if (payload != null) {
-        final uri = Uri.tryParse(payload);
-        if (uri != null) {
-          if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-            print('Could not launch: $uri');
+    await notificationsPlugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) async {
+        final payload = response.payload;
+        if (payload != null) {
+          final uri = Uri.tryParse(payload);
+          if (uri != null) {
+            if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+              print('Could not launch: $uri');
+            }
           }
         }
-      }
-    },
-  );
+      },
+    );
 
 
     // 2️⃣ Request notification permission (Android 13+ and iOS)
@@ -208,6 +210,31 @@ class _HomePageState extends State<HomePage> {
         await iosPlugin.requestPermissions(alert: true, badge: true, sound: true);
       }
     }
+  }*/
+  Future<void> _initNotifications() async {
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = InitializationSettings(android: androidSettings);
+
+    await notificationsPlugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) async {
+        final payload = response.payload;
+        if (payload != null) {
+          final parts = payload.split(',');
+          if (parts.length == 2) {
+            final lat = double.tryParse(parts[0]);
+            final lon = double.tryParse(parts[1]);
+            if (lat != null && lon != null) {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MapScreen(latitude: lat, longitude: lon),
+                ),
+              );
+            }
+          }
+        }
+      },
+    );
   }
 
 
@@ -231,7 +258,6 @@ class _HomePageState extends State<HomePage> {
     }
     return true; // default for other platforms
   }
-
 
   //---------Listen for SMS-----------
   void _listenForSms() {
@@ -285,7 +311,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   //---------Show Location Notification-----------
-  Future<void> _showLocationNotification(String message) async {
+  /*Future<void> _showLocationNotification(String message) async {
     final regex = RegExp(r'(-?\d{1,3}\.\d+),\s*(-?\d{1,3}\.\d+)');
     final match = regex.firstMatch(message);
 
@@ -316,7 +342,33 @@ class _HomePageState extends State<HomePage> {
         );
       }
     }
+  }*/
+  Future<void> _showLocationNotification(String message) async {
+    final regex = RegExp(r'(-?\d+\.\d+),(-?\d+\.\d+)');
+    final match = regex.firstMatch(message);
+
+    if (match != null) {
+      final lat = match.group(1);
+      final lon = match.group(2);
+
+      const androidDetails = AndroidNotificationDetails(
+        'location_channel',
+        'Location Notifications',
+        importance: Importance.max,
+        priority: Priority.high,
+        ticker: 'ticker',
+      );
+
+      await notificationsPlugin.show(
+        0,
+        'Location Received',
+        'Tap to view on map',
+        const NotificationDetails(android: androidDetails),
+        payload: '$lat,$lon', // send coordinates to payload
+      );
+    }
   }
+
 
   // -------------------- Widgets --------------------
   Widget _buildCategoryChips() {
@@ -644,6 +696,50 @@ class _HomePageState extends State<HomePage> {
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // ----------- Map Button -----------
+          FloatingActionButton(
+            heroTag: "openMap",
+            backgroundColor: Colors.green,
+            onPressed: () async {
+              // Check location permission
+              var status = await Permission.location.status;
+              if (!status.isGranted) {
+                status = await Permission.location.request();
+              }
+
+              if (status.isGranted) {
+                try {
+                  Position pos = await Geolocator.getCurrentPosition(
+                    desiredAccuracy: LocationAccuracy.high,
+                  );
+
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MapScreen(
+                        latitude: pos.latitude,
+                        longitude: pos.longitude,
+                      ),
+                    ),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Error getting location: $e")),
+                  );
+                }
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Location permission not granted")),
+                );
+              }
+            },
+            child: const Icon(Icons.map, color: Colors.white),
+            tooltip: "Open Map",
+          ),
+
+          const SizedBox(height: 12),
+
+          // ----------- Categories Button -----------
           FloatingActionButton(
             heroTag: "manageCategories",
             backgroundColor: Theme.of(context).primaryColor,
@@ -655,7 +751,10 @@ class _HomePageState extends State<HomePage> {
             },
             child: const Icon(Icons.category, color: Colors.white),
           ),
+
           const SizedBox(height: 12),
+
+          // ----------- Add Contact Button -----------
           FloatingActionButton(
             heroTag: "addContact",
             backgroundColor: Theme.of(context).primaryColor,
@@ -672,6 +771,7 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+
     );
   }
 }
