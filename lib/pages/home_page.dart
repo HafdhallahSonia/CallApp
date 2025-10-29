@@ -702,7 +702,9 @@ class _HomePageState extends State<HomePage> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => SavedPositionsScreen()),
+                MaterialPageRoute(
+                  builder: (_) => SavedPositionsScreen(userId: userId),
+                ),
               );
             },
             child: const Icon(Icons.list, color: Colors.white),
