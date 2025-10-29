@@ -14,7 +14,7 @@ import 'package:another_telephony/telephony.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'map_screen.dart';
-
+import 'SavedPositionsScreen.dart';
 
 
 class HomePage extends StatefulWidget {
@@ -696,10 +696,23 @@ class _HomePageState extends State<HomePage> {
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          FloatingActionButton(
+            heroTag: "savedPositions",
+            backgroundColor: Theme.of(context).primaryColor,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => SavedPositionsScreen()),
+              );
+            },
+            child: const Icon(Icons.list, color: Colors.white),
+          ),
+          const SizedBox(height: 12),
+
           // ----------- Map Button -----------
           FloatingActionButton(
             heroTag: "openMap",
-            backgroundColor: Colors.green,
+            backgroundColor: Theme.of(context).primaryColor,
             onPressed: () async {
               // Check location permission
               var status = await Permission.location.status;
@@ -736,9 +749,7 @@ class _HomePageState extends State<HomePage> {
             child: const Icon(Icons.map, color: Colors.white),
             tooltip: "Open Map",
           ),
-
           const SizedBox(height: 12),
-
           // ----------- Categories Button -----------
           FloatingActionButton(
             heroTag: "manageCategories",
@@ -751,9 +762,7 @@ class _HomePageState extends State<HomePage> {
             },
             child: const Icon(Icons.category, color: Colors.white),
           ),
-
           const SizedBox(height: 12),
-
           // ----------- Add Contact Button -----------
           FloatingActionButton(
             heroTag: "addContact",
