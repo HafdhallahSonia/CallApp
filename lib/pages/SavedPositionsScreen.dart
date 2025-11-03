@@ -71,7 +71,7 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
 
   // ------------------ Fetch saved positions ------------------
   Future<void> _fetchPositions() async {
-    final url = Uri.parse("http://10.149.166.230/callapp/get_positions.php");
+    final url = Uri.parse("http://10.34.180.230/callapp/get_positions.php");
     try {
       final response = await http.get(url);
       final data = json.decode(response.body);
@@ -109,7 +109,7 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
 
   // ------------------ Delete position ------------------
   Future<void> _deletePosition(int idPosition) async {
-    final url = Uri.parse("http://10.149.166.230/callapp/delete_position.php");
+    final url = Uri.parse("http://10.34.180.230/callapp/delete_position.php");
     try {
       final response = await http.post(
         url,
@@ -331,6 +331,7 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
                                       builder: (_) => MapScreen(
                                         latitude: double.parse(pos['latitude']),
                                         longitude: double.parse(pos['longitude']),
+                                        isFromSavedList: true,
                                       ),
                                     ),
                                   );
