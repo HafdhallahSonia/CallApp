@@ -9,7 +9,8 @@ import 'package:another_telephony/telephony.dart';
 class SavedPositionsScreen extends StatefulWidget {
   final int userId;
 
-  const SavedPositionsScreen({Key? key, required this.userId}) : super(key: key);
+  const SavedPositionsScreen({Key? key, required this.userId})
+    : super(key: key);
 
   @override
   _SavedPositionsScreenState createState() => _SavedPositionsScreenState();
@@ -26,8 +27,10 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
   List<Map<String, dynamic>> _filteredPositions = [];
   bool _loading = true;
 
-  final TextEditingController _contactSearchController = TextEditingController();
-  final TextEditingController _positionSearchController = TextEditingController();
+  final TextEditingController _contactSearchController =
+      TextEditingController();
+  final TextEditingController _positionSearchController =
+      TextEditingController();
 
   @override
   void initState() {
@@ -50,10 +53,14 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
   Future<void> _loadContacts() async {
     final data = await dbHelper.getContacts(widget.userId);
     setState(() {
-      _contacts = data.map((c) => {
-        "name": "${c['firstname'] ?? ''} ${c['lastname'] ?? ''}".trim(),
-        "phone": c['phone'] ?? '',
-      }).toList();
+      _contacts = data
+          .map(
+            (c) => {
+              "name": "${c['firstname'] ?? ''} ${c['lastname'] ?? ''}".trim(),
+              "phone": c['phone'] ?? '',
+            },
+          )
+          .toList();
       _filteredContacts = List.from(_contacts);
     });
   }
@@ -71,7 +78,7 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
 
   // ------------------ Fetch saved positions ------------------
   Future<void> _fetchPositions() async {
-    final url = Uri.parse("http://10.34.180.230/callapp/get_positions.php");
+    final url = Uri.parse("http://192.168.1.120/callapp/get_positions.php");
     try {
       final response = await http.get(url);
       final data = json.decode(response.body);
@@ -84,15 +91,15 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
         });
       } else {
         setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: ${data['message']}")),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: ${data['message']}")));
       }
     } catch (e) {
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Request failed: $e")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Request failed: $e")));
     }
   }
 
@@ -108,32 +115,34 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
   }
 
   // ------------------ Delete position ------------------
-  Future<void> _deletePosition(int idPosition) async {
-    final url = Uri.parse("http://10.34.180.230/callapp/delete_position.php");
+  Future<void> _deletePosition(int id) async {
+    final url = Uri.parse("http://192.168.1.120/callapp/delete_position.php");
+
     try {
       final response = await http.post(
         url,
-        body: {"idPosition": idPosition.toString()},
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"id": id}),
       );
 
       print("Delete response: ${response.body}");
 
       final data = json.decode(response.body);
 
-      if (data['success'] == 1) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Position deleted")),
-        );
-        await _fetchPositions(); // Refresh positions
+      if (data['success'] == true) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Position deleted")));
+        await _fetchPositions(); // Refresh list
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: ${data['message']}")),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: ${data['message']}")));
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Request failed: $e")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Request failed: $e")));
     }
   }
 
@@ -177,7 +186,9 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
                             );
 
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("Location sent via SMS")),
+                              const SnackBar(
+                                content: Text("Location sent via SMS"),
+                              ),
                             );
 
                             Navigator.pop(context); // close dialog
@@ -251,7 +262,10 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 0,
+                    horizontal: 12,
+                  ),
                 ),
               ),
             ),
@@ -260,86 +274,113 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _filteredPositions.isEmpty
-                      ? const Center(child: Text("No saved positions"))
-                      : ListView.builder(
-                          itemCount: _filteredPositions.length,
-                          itemBuilder: (context, index) {
-                            final pos = _filteredPositions[index];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              child: ListTile(
-                                leading: const Icon(Icons.location_on, color: Colors.red),
-                                title: Text(pos['pseudo'] ?? 'Unknown'),
-                                subtitle: Text(
-                                    "Num: ${pos['numero']}\nLat: ${pos['latitude']}, Lon: ${pos['longitude']}"),
-                                isThreeLine: true,
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.share, color: Colors.green),
-                                      tooltip: "Share Position",
-                                      onPressed: () {
-                                        _showShareDialog(
-                                          double.parse(pos['latitude']),
-                                          double.parse(pos['longitude']),
-                                        );
-                                      },
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete, color: Colors.red),
-                                      tooltip: "Delete Position",
-                                      onPressed: () async {
-                                        final confirmed = await showDialog(
-                                          context: context,
-                                          builder: (context) => AlertDialog(
-                                            title: const Text("Confirm Delete"),
-                                            content: const Text(
-                                                "Are you sure you want to delete this position?"),
-                                            actions: [
-                                              TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.of(context).pop(false),
-                                                  child: const Text("Cancel")),
-                                              TextButton(
-                                                  onPressed: () =>
-                                                      Navigator.of(context).pop(true),
-                                                  child: const Text("Delete")),
-                                            ],
+                  ? const Center(child: Text("No saved positions"))
+                  : ListView.builder(
+                      itemCount: _filteredPositions.length,
+                      itemBuilder: (context, index) {
+                        final pos = _filteredPositions[index];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                            vertical: 6,
+                            horizontal: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ListTile(
+                            leading: const Icon(
+                              Icons.location_on,
+                              color: Colors.red,
+                            ),
+                            title: Text(pos['pseudo'] ?? 'Unknown'),
+                            subtitle: Text(
+                              "Num: ${pos['numero']}\nLat: ${pos['latitude']}, Lon: ${pos['longitude']}",
+                            ),
+                            isThreeLine: true,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.share,
+                                    color: Colors.green,
+                                  ),
+                                  tooltip: "Share Position",
+                                  onPressed: () {
+                                    _showShareDialog(
+                                      double.parse(pos['latitude']),
+                                      double.parse(pos['longitude']),
+                                    );
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  tooltip: "Delete Position",
+                                  onPressed: () async {
+                                    final confirmed = await showDialog(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        title: const Text("Confirm Delete"),
+                                        content: const Text(
+                                          "Are you sure you want to delete this position?",
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.of(
+                                              context,
+                                            ).pop(false),
+                                            child: const Text("Cancel"),
+                                          ),
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(context).pop(true),
+                                            child: const Text("Delete"),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirmed == true) {
+                                      final id = int.tryParse(
+                                        pos['id'].toString(),
+                                      );
+                                      if (id != null) {
+                                        _deletePosition(id);
+                                      } else {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              "Invalid position ID",
+                                            ),
                                           ),
                                         );
-                                        if (confirmed == true) {
-                                          final id = int.tryParse(pos['idPosition'].toString());
-                                          if (id != null) {
-                                            _deletePosition(id);
-                                          } else {
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              const SnackBar(content: Text("Invalid position ID")),
-                                            );
-                                          }
-                                        }
-                                      },
-                                    ),
-                                    const Icon(Icons.arrow_forward_ios),
-                                  ],
+                                      }
+                                    }
+                                  },
                                 ),
-                                onTap: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => MapScreen(
-                                        latitude: double.parse(pos['latitude']),
-                                        longitude: double.parse(pos['longitude']),
-                                        isFromSavedList: true,
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            );
-                          },
-                        ),
+                                const Icon(Icons.arrow_forward_ios),
+                              ],
+                            ),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => MapScreen(
+                                    latitude: double.parse(pos['latitude']),
+                                    longitude: double.parse(pos['longitude']),
+                                    isFromSavedList: true,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
