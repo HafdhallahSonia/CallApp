@@ -5,10 +5,9 @@ import 'package:contact_list/models/user.dart';
 import 'signup_screen.dart';
 import 'home_page.dart';
 
-
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
-  
+
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
@@ -26,7 +25,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      
+
       body: Container(
         decoration: const BoxDecoration(
           image: DecorationImage(
@@ -187,7 +186,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => HomePage(
-                                        username: _usernameController.text.trim(),
+                                        username: _usernameController.text
+                                            .trim(),
                                         userId: result['userId'],
                                       ),
                                     ),
@@ -217,8 +217,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     child: _isLoading
                         ? const CircularProgressIndicator(
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.black87),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.black87,
+                            ),
                           )
                         : const Text(
                             'Sign In',

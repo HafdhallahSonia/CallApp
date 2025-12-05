@@ -6,13 +6,13 @@ import 'package:http/http.dart' as http;
 import 'package:geocoding/geocoding.dart' as geo;
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:geolocator_android/geolocator_android.dart';
 
 class MapScreen extends StatefulWidget {
   final double latitude;
   final double longitude;
   final bool isFromSavedList;
   final String? senderNumber;
+  final int? pathId;
 
   const MapScreen({
     Key? key,
@@ -20,6 +20,7 @@ class MapScreen extends StatefulWidget {
     required this.longitude,
     this.isFromSavedList = false,
     this.senderNumber,
+    this.pathId,
   }) : super(key: key);
 
   @override
@@ -29,6 +30,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   GoogleMapController? _controller;
   final Set<Marker> _markers = {};
+  final Set<Polyline> _polylines = {};
   final TextEditingController _searchController = TextEditingController();
   LatLng? _selectedPosition;
   String _selectedAddress = 'Tap on the map to select a location';
@@ -37,147 +39,13 @@ class _MapScreenState extends State<MapScreen> {
   LatLng _currentPosition = const LatLng(0, 0);
   bool _isCurrentPositionSaved = false;
 
-  bool _isSameAsCurrentPosition(double lat, double lng) {
-    // Compare with a small epsilon to account for floating point precision
-    const double epsilon = 0.000001;
-    return (lat - _currentPosition.latitude).abs() < epsilon &&
-        (lng - _currentPosition.longitude).abs() < epsilon;
-  }
+  // Tracking state
+  bool _isTracking = false;
+  final List<LatLng> _trackedPositions = [];
+  int _polylineIdCounter = 1;
 
-  Future<void> _showSavedPosition() async {
-    if (!mounted) return;
-
-    // Check if the received position matches current position
-    final isSameAsCurrent = _isSameAsCurrentPosition(
-      widget.latitude,
-      widget.longitude,
-    );
-
-    setState(() {
-      // Clear existing markers
-      _markers.clear();
-
-      // Add the appropriate marker based on the position and source
-      _markers.add(
-        Marker(
-          markerId: const MarkerId("position_marker"),
-          position: _currentPosition,
-          infoWindow: InfoWindow(
-            title: isSameAsCurrent
-                ? widget.senderNumber != null
-                      ? "Current/Received Location"
-                      : "Current Location"
-                : widget.senderNumber != null
-                ? "Received Location"
-                : "Saved Location",
-          ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            isSameAsCurrent
-                ? BitmapDescriptor
-                      .hueBlue // Blue for current position
-                : widget.senderNumber != null
-                ? BitmapDescriptor
-                      .hueViolet // Purple for notification
-                : BitmapDescriptor.hueGreen, // Green for saved locations
-          ),
-          onTap: _showSaveDialog,
-        ),
-      );
-    });
-
-    // Wait for the controller to be initialized
-    if (_controller != null) {
-      await _controller?.animateCamera(
-        CameraUpdate.newLatLngZoom(_currentPosition, 15),
-      );
-    }
-  }
-
-  // Fetch all saved positions from the server
-  Future<void> _fetchAllSavedPositions() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final url = Uri.parse("http://192.168.1.120/callapp/get_positions.php");
-      final response = await http.get(url);
-      final data = json.decode(response.body);
-
-      if (data['success'] == 1) {
-        final positions = List<Map<String, dynamic>>.from(data['data']);
-
-        if (!mounted) return;
-
-        setState(() {
-          _isCurrentPositionSaved = positions.any((position) {
-            final lat = double.parse(position['latitude']);
-            final lng = double.parse(position['longitude']);
-            return _isSameAsCurrentPosition(lat, lng);
-          });
-
-          // Clear existing markers
-          _markers.clear();
-
-          // Add current position marker
-          _markers.add(
-            Marker(
-              markerId: const MarkerId("current_position"),
-              position: _currentPosition,
-              infoWindow: InfoWindow(
-                title: _isCurrentPositionSaved
-                    ? "Current/Saved Location"
-                    : "My Current Location",
-              ),
-              icon: BitmapDescriptor.defaultMarkerWithHue(
-                BitmapDescriptor.hueBlue,
-              ),
-              onTap: () {
-                _selectedPosition = _currentPosition;
-                _showSaveDialog();
-              },
-            ),
-          );
-
-          // Add markers for all saved positions (except those that match current location)
-          for (var i = 0; i < positions.length; i++) {
-            final position = positions[i];
-            final lat = double.parse(position['latitude']);
-            final lng = double.parse(position['longitude']);
-
-            // Skip if this is the current position (we already have a marker for it)
-            if (_isSameAsCurrentPosition(lat, lng)) {
-              continue;
-            }
-
-            _markers.add(
-              Marker(
-                markerId: MarkerId('saved_position_$i'),
-                position: LatLng(lat, lng),
-                infoWindow: InfoWindow(
-                  title: "Saved Location",
-                  snippet: '${position['pseudo']} - ${position['numero']}',
-                ),
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueGreen,
-                ),
-                onTap: () {
-                  _selectedPosition = LatLng(lat, lng);
-                  _showSaveDialog();
-                },
-              ),
-            );
-          }
-        });
-      }
-    } catch (e) {
-      print('Error fetching saved positions: $e');
-    }
-  }
-
-  final TextEditingController _numeroController = TextEditingController();
+  // Server endpoints (change host if needed)
+  final String baseUrl = 'http://10.35.112.138/callapp';
 
   @override
   void initState() {
@@ -187,28 +55,31 @@ class _MapScreenState extends State<MapScreen> {
     _currentPosition = LatLng(widget.latitude, widget.longitude);
     _selectedPosition = _currentPosition;
 
-    // Initialize phone number field with sender's number if available
-    _numeroController.text = widget.senderNumber ?? '';
-
-    // Start location tracking if not opened from saved list
+    // Start location tracking if not opened from saved list (but NOT path tracking)
     if (!widget.isFromSavedList) {
-      _startLocationTracking();
+      _startLocationFollowing(); // this will keep current pos updated
     }
 
-    // Fetch all saved positions - this will handle the markers
+    // Fetch saved positions (markers) if you want them displayed
     _fetchAllSavedPositions();
+
+    //load path if pathId is passed
+    if (widget.pathId != null) {
+      Future.delayed(Duration(milliseconds: 200), () {
+        _loadPath(widget.pathId!);
+      });
+    }
   }
 
   @override
   void dispose() {
-    // Cancel the position stream when the widget is disposed
     _positionStream?.cancel();
     _searchController.dispose();
     _controller?.dispose();
-    _numeroController.dispose();
     super.dispose();
   }
 
+  // ------------------------- Permissions & Location helpers -------------------------
   Future<bool> _checkLocationServices() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -257,34 +128,36 @@ class _MapScreenState extends State<MapScreen> {
     return status.isGranted;
   }
 
-  void _startLocationTracking() async {
-    // Check if location services are enabled
+  // Follow current location (used whether tracking or not)
+  void _startLocationFollowing() async {
     final serviceEnabled = await _checkLocationServices();
     if (!serviceEnabled) return;
-
-    // Check and request location permissions
     final hasPermission = await _checkLocationPermission();
     if (!hasPermission) return;
 
     try {
-      // Get current position first
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
       _updateCurrentPosition(LatLng(position.latitude, position.longitude));
 
-      // Then listen to position updates
       _positionStream =
           Geolocator.getPositionStream(
             locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              distanceFilter: 10, // Update every 10 meters
+              accuracy: LocationAccuracy.best,
+              distanceFilter: 5,
             ),
           ).listen(
             (Position position) {
               _updateCurrentPosition(
                 LatLng(position.latitude, position.longitude),
               );
+              // If tracking, append to the tracked positions and update polyline
+              if (_isTracking) {
+                _addTrackedPosition(
+                  LatLng(position.latitude, position.longitude),
+                );
+              }
             },
             onError: (e) {
               if (mounted) {
@@ -303,51 +176,293 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  //updating the polyline on the map that represents the tracked path
   Future<void> _updateCurrentPosition(LatLng newPosition) async {
     if (!mounted) return;
-
     setState(() {
       _currentPosition = newPosition;
       _selectedPosition = newPosition;
-
-      // Update or add the current position marker
+      // Update current marker
       _markers.removeWhere((m) => m.markerId.value == 'current_position');
       _markers.add(
         Marker(
-          markerId: const MarkerId("current_position"),
+          markerId: const MarkerId('current_position'),
           position: newPosition,
-          infoWindow: InfoWindow(
-            title: _isCurrentPositionSaved
-                ? "Current/Saved Location"
-                : "My Current Location",
-          ),
+          infoWindow: const InfoWindow(title: 'My Current Location'),
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-          onTap: () {
-            _selectedPosition = newPosition;
-            _showSaveDialog();
-          },
+          onTap: () => _showSaveDialog(),
         ),
       );
     });
 
-    // Move camera to follow the user
+    // Move camera to follow user (only if not manually moved)
     if (_controller != null) {
       await _controller?.animateCamera(CameraUpdate.newLatLng(newPosition));
     }
   }
 
+  // ------------------------- Tracking helpers -------------------------
+  //begins the tracking
+  void _startTracking() {
+    if (_isTracking) return;
+    setState(() {
+      _isTracking = true;
+      _trackedPositions.clear();
+      // add the current position as first point (if available)
+      _trackedPositions.add(_currentPosition);
+      _polylines.clear();
+    });
+    _showSnack('Tracking started');
+  }
+
+  // ends the tracking
+  void _stopTrackingAndPromptSave() async {
+    if (!_isTracking) return;
+    setState(() {
+      _isTracking = false;
+    });
+    if (_trackedPositions.length < 2) {
+      _showSnack('Path too short — nothing saved');
+      return;
+    }
+    await _showSavePathDialog();
+  }
+
+  //Adds the new position
+  void _addTrackedPosition(LatLng pos) {
+    if (!mounted) return;
+    setState(() {
+      _trackedPositions.add(pos);
+      _redrawTrackingPolyline();
+    });
+  }
+
+  void _redrawTrackingPolyline() {
+    final polylineId = PolylineId('tracking_${_polylineIdCounter}');
+    _polylineIdCounter++;
+    _polylines.removeWhere((p) => p.polylineId.value.startsWith('tracking_'));
+    _polylines.add(
+      Polyline(
+        polylineId: polylineId,
+        points: List<LatLng>.from(_trackedPositions),
+        width: 5,
+        geodesic: false,
+      ),
+    );
+  }
+
+  // ------------------------- Save / Load paths via PHP -------------------------
+  Future<void> _showSavePathDialog() async {
+    final TextEditingController nameController = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save Tracked Path'),
+        content: TextField(
+          controller: nameController,
+          decoration: const InputDecoration(labelText: 'Path name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              if (name.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a name')),
+                );
+                return;
+              }
+              Navigator.pop(ctx);
+              _saveTrackedPath(name);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _saveTrackedPath(String name) async {
+    if (_trackedPositions.isEmpty) return;
+    final url = Uri.parse('$baseUrl/save_path.php');
+
+    final points = _trackedPositions
+        .map(
+          (p) => {
+            'latitude': p.latitude.toString(),
+            'longitude': p.longitude.toString(),
+          },
+        )
+        .toList();
+
+    final body = jsonEncode({'name': name, 'points': points});
+
+    try {
+      setState(() => _isLoading = true);
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      );
+      final data = jsonDecode(response.body);
+      if (data['success'] == true) {
+        _showSnack('Saved path: $name');
+        // Optionally clear current tracked path after saving:
+        // setState(() { _trackedPositions.clear(); _polylines.clear(); });
+      } else {
+        _showSnack('Save failed: ${data['message'] ?? 'server error'}');
+      }
+    } catch (e) {
+      _showSnack('Request failed: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // Fetch list of saved paths
+  Future<List<Map<String, dynamic>>> _fetchSavedPaths() async {
+    final url = Uri.parse('$baseUrl/get_paths.php');
+    try {
+      final response = await http.get(url);
+      final data = jsonDecode(response.body);
+      if (data['success'] == true) {
+        final List paths = data['data'];
+        return List<Map<String, dynamic>>.from(paths);
+      } else {
+        _showSnack('Could not load saved paths');
+        return [];
+      }
+    } catch (e) {
+      _showSnack('Request failed: $e');
+      return [];
+    }
+  }
+
+  // Load a specific path by id and display on map
+  Future<void> _loadPath(int id) async {
+    final url = Uri.parse('$baseUrl/get_path.php?id=$id');
+    try {
+      setState(() => _isLoading = true);
+      final response = await http.get(url);
+      final data = jsonDecode(response.body);
+      if (data['success'] == true) {
+        final points = List<Map<String, dynamic>>.from(data['data']);
+        if (points.isEmpty) {
+          _showSnack('Path empty');
+          return;
+        }
+        final List<LatLng> loaded = points
+            .map(
+              (p) => LatLng(
+                (p['latitude'] as num).toDouble(),
+                (p['longitude'] as num).toDouble(),
+              ),
+            )
+            .toList();
+
+        // create polyline for loaded path
+        final polyId = PolylineId(
+          'loaded_${DateTime.now().millisecondsSinceEpoch}',
+        );
+        setState(() {
+          _polylines.add(
+            Polyline(polylineId: polyId, points: loaded, width: 5),
+          );
+          // add markers for start/end
+          _markers.removeWhere(
+            (m) =>
+                m.markerId.value == 'path_start' ||
+                m.markerId.value == 'path_end',
+          );
+          _markers.add(
+            Marker(
+              markerId: const MarkerId('path_start'),
+              position: loaded.first,
+              infoWindow: const InfoWindow(title: 'Start'),
+            ),
+          );
+          _markers.add(
+            Marker(
+              markerId: const MarkerId('path_end'),
+              position: loaded.last,
+              infoWindow: const InfoWindow(title: 'End'),
+            ),
+          );
+        });
+
+        // move camera to start point
+        await _controller?.animateCamera(
+          CameraUpdate.newLatLngZoom(loaded.first, 15),
+        );
+      } else {
+        _showSnack('Could not load path: ${data['message']}');
+      }
+    } catch (e) {
+      _showSnack('Request failed: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // UI to select and load a saved path
+  Future<void> _showSavedPathsDialog() async {
+    final paths = await _fetchSavedPaths();
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SizedBox(
+        height: 400,
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text(
+                'Saved Paths',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            Expanded(
+              child: paths.isEmpty
+                  ? const Center(child: Text('No saved paths'))
+                  : ListView.builder(
+                      itemCount: paths.length,
+                      itemBuilder: (context, index) {
+                        final p = paths[index];
+                        return ListTile(
+                          title: Text(p['name'] ?? 'Path ${p['id']}'),
+                          subtitle: Text('Created: ${p['created_at'] ?? ''}'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.download),
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _loadPath(int.parse(p['id'].toString()));
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ------------------------- Save single position (existing) -------------------------
   Future<void> _showSaveDialog({
     String? existingPseudo,
     String? existingNumero,
   }) async {
-    // Use controllers to manage text inputs
-    final TextEditingController pseudoController = TextEditingController();
-    final TextEditingController numeroController = TextEditingController();
-
-    // Prefill if editing an existing marker
-    pseudoController.text = existingPseudo ?? '';
-    numeroController.text = existingNumero ?? _numeroController.text;
-
+    final TextEditingController pseudoController = TextEditingController(
+      text: existingPseudo ?? '',
+    );
+    final TextEditingController numeroController = TextEditingController(
+      text: existingNumero ?? '',
+    );
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -375,17 +490,14 @@ class _MapScreenState extends State<MapScreen> {
             onPressed: () {
               final pseudo = pseudoController.text.trim();
               final numero = numeroController.text.trim();
-
               if (pseudo.isEmpty || numero.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text("Please fill all fields")),
                 );
-                return; // Don't close the dialog if fields are empty
+                return;
               }
-
-              // Save the position
               Navigator.pop(ctx);
-              _savePosition(pseudo, numero);
+              _saveSinglePosition(pseudo, numero);
             },
             child: const Text("Save"),
           ),
@@ -394,55 +506,68 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Future<void> _savePosition(String pseudo, String numero) async {
+  Future<void> _saveSinglePosition(String pseudo, String numero) async {
     if (_selectedPosition == null) return;
-    final url = Uri.parse("http://192.168.1.120/callapp/save_position.php");
+    final url = Uri.parse('$baseUrl/save_position.php'); // assumed existing API
     try {
       final response = await http.post(
         url,
-        headers: {"Content-Type": "application/json"},
+        headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          "pseudo": pseudo,
-          "numero": numero,
-          "latitude": _selectedPosition!.latitude,
-          "longitude": _selectedPosition!.longitude,
+          'pseudo': pseudo,
+          'numero': numero,
+          'latitude': _selectedPosition!.latitude,
+          'longitude': _selectedPosition!.longitude,
         }),
       );
-
-      final data = json.decode(response.body);
-      if (mounted) {
-        if (data['success'] == true) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Position saved successfully")),
-          );
-          // Update the marker to show it's saved
-          _markers.removeWhere((m) => m.markerId.value == 'selected_position');
-          _markers.add(
-            Marker(
-              markerId: const MarkerId('saved_position'),
-              position: _selectedPosition!,
-              icon: BitmapDescriptor.defaultMarkerWithHue(
-                BitmapDescriptor.hueGreen,
-              ),
-              infoWindow: InfoWindow(title: 'Saved: $pseudo ($numero)'),
-              onTap: _showSaveDialog,
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text("Error: ${data['message']}")));
-        }
+      final data = jsonDecode(response.body);
+      if (data['success'] == true) {
+        _showSnack('Position saved successfully');
+      } else {
+        _showSnack('Error: ${data['message']}');
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Request failed: $e")));
-      }
+      _showSnack('Request failed: $e');
     }
   }
 
+  // ------------------------- Fetch existing saved positions to show as markers -------------------------
+  Future<void> _fetchAllSavedPositions() async {
+    try {
+      final url = Uri.parse(
+        '$baseUrl/get_positions.php',
+      ); // your existing endpoint
+      final response = await http.get(url);
+      final data = jsonDecode(response.body);
+      if (data['success'] == 1) {
+        final positions = List<Map<String, dynamic>>.from(data['data']);
+        setState(() {
+          for (var i = 0; i < positions.length; i++) {
+            final lat = double.parse(positions[i]['latitude']);
+            final lng = double.parse(positions[i]['longitude']);
+            _markers.add(
+              Marker(
+                markerId: MarkerId('saved_$i'),
+                position: LatLng(lat, lng),
+                infoWindow: InfoWindow(
+                  title: 'Saved Location',
+                  snippet:
+                      '${positions[i]['pseudo']} - ${positions[i]['numero']}',
+                ),
+                icon: BitmapDescriptor.defaultMarkerWithHue(
+                  BitmapDescriptor.hueGreen,
+                ), // <-- green marker
+              ),
+            );
+          }
+        });
+      }
+    } catch (e) {
+      // ignore or show snack
+    }
+  }
+
+  // ------------------------- Search and map tap -------------------------
   Future<void> _onMapTapped(LatLng position) async {
     if (!mounted) return;
 
@@ -460,50 +585,20 @@ class _MapScreenState extends State<MapScreen> {
       _isLoading = true;
     });
 
-    // Move camera to selected position
-    if (_controller != null) {
-      await _controller?.animateCamera(CameraUpdate.newLatLng(position));
-    }
-
-    // Get address for the tapped position
     try {
       final placemarks = await geo.placemarkFromCoordinates(
         position.latitude,
         position.longitude,
       );
-
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          if (placemarks.isNotEmpty) {
-            final place = placemarks.first;
-            _selectedAddress =
-                '${place.street}, ${place.locality}, ${place.country}';
-          } else {
-            _selectedAddress = 'No address found';
-          }
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _selectedAddress = 'Error getting address';
-        });
-      }
-    }
-
-    try {
-      final placemarks = await geo.placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-
       if (placemarks.isNotEmpty) {
         final place = placemarks.first;
         setState(() {
           _selectedAddress =
-              '${place.street}, ${place.locality}, ${place.country}';
+              '${place.street ?? ''}, ${place.locality ?? ''}, ${place.country ?? ''}';
+        });
+      } else {
+        setState(() {
+          _selectedAddress = 'No address found';
         });
       }
     } catch (e) {
@@ -511,19 +606,13 @@ class _MapScreenState extends State<MapScreen> {
         _selectedAddress = 'Could not get address';
       });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _searchLocation() async {
     if (_searchController.text.isEmpty) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
+    setState(() => _isLoading = true);
     try {
       final locations = await geo.locationFromAddress(_searchController.text);
       if (locations.isNotEmpty) {
@@ -539,20 +628,22 @@ class _MapScreenState extends State<MapScreen> {
         _onMapTapped(LatLng(location.latitude, location.longitude));
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not find the location')),
         );
-      }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  // ------------------------- UI helpers -------------------------
+  void _showSnack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  // ------------------------- Build -------------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -569,6 +660,10 @@ class _MapScreenState extends State<MapScreen> {
               }
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.list_alt),
+            onPressed: _showSavedPathsDialog, // open saved paths list
+          ),
         ],
       ),
       body: Stack(
@@ -579,11 +674,14 @@ class _MapScreenState extends State<MapScreen> {
               zoom: 15,
             ),
             markers: _markers,
+            polylines: _polylines,
             onMapCreated: (controller) {
               _controller = controller;
-              // If opened from saved list, show the saved position after controller is ready
               if (widget.isFromSavedList) {
-                _showSavedPosition();
+                // optionally zoom to the initial position
+                _controller?.animateCamera(
+                  CameraUpdate.newLatLngZoom(_currentPosition, 15),
+                );
               }
             },
             onTap: _onMapTapped,
@@ -654,9 +752,31 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _selectedPosition != null ? _showSaveDialog : null,
-        child: const Icon(Icons.save),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Start/Stop tracking button
+          FloatingActionButton.extended(
+            heroTag: 'trackBtn',
+            icon: Icon(_isTracking ? Icons.stop : Icons.play_arrow),
+            label: Text(_isTracking ? 'Stop & Save' : 'Start Tracking'),
+            backgroundColor: _isTracking ? Colors.red : Colors.green,
+            onPressed: () {
+              if (_isTracking) {
+                _stopTrackingAndPromptSave();
+              } else {
+                _startTracking();
+              }
+            },
+          ),
+          const SizedBox(height: 12),
+          // Show saved paths
+          FloatingActionButton(
+            heroTag: 'savedListBtn',
+            onPressed: _showSavedPathsDialog,
+            child: const Icon(Icons.history),
+          ),
+        ],
       ),
     );
   }

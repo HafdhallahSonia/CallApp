@@ -1,10 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
+import 'package:another_telephony/telephony.dart';
 import '../services/db.dart';
 import 'map_screen.dart';
-import 'package:another_telephony/telephony.dart';
 
 class SavedPositionsScreen extends StatefulWidget {
   final int userId;
@@ -16,7 +15,8 @@ class SavedPositionsScreen extends StatefulWidget {
   _SavedPositionsScreenState createState() => _SavedPositionsScreenState();
 }
 
-class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
+class _SavedPositionsScreenState extends State<SavedPositionsScreen>
+    with SingleTickerProviderStateMixin {
   final DbHelper dbHelper = DbHelper();
   final Telephony telephony = Telephony.instance;
 
@@ -24,32 +24,36 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
   List<Map<String, dynamic>> _filteredContacts = [];
 
   List<Map<String, dynamic>> _positions = [];
-  List<Map<String, dynamic>> _filteredPositions = [];
-  bool _loading = true;
+  List<Map<String, dynamic>> _paths = [];
 
-  final TextEditingController _contactSearchController =
-      TextEditingController();
-  final TextEditingController _positionSearchController =
-      TextEditingController();
+  List<Map<String, dynamic>> _filteredPositions = [];
+  List<Map<String, dynamic>> _filteredPaths = [];
+
+  bool _loadingPositions = true;
+  bool _loadingPaths = true;
+
+  late TabController _tabController;
+
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _searchController.addListener(_filterItems);
     _loadContacts();
     _fetchPositions();
-
-    _contactSearchController.addListener(_filterContacts);
-    _positionSearchController.addListener(_filterPositions);
+    _fetchPaths();
   }
 
   @override
   void dispose() {
-    _contactSearchController.dispose();
-    _positionSearchController.dispose();
+    _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
-  // ------------------ Load contacts from DB ------------------
+  // ------------------ Load contacts ------------------
   Future<void> _loadContacts() async {
     final data = await dbHelper.getContacts(widget.userId);
     setState(() {
@@ -65,85 +69,76 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
     });
   }
 
-  void _filterContacts() {
-    final query = _contactSearchController.text.toLowerCase();
-    setState(() {
-      _filteredContacts = _contacts.where((c) {
-        final name = c['name'].toLowerCase();
-        final phone = c['phone'].toLowerCase();
-        return name.contains(query) || phone.contains(query);
-      }).toList();
-    });
-  }
-
-  // ------------------ Fetch saved positions ------------------
+  // ------------------ Fetch positions ------------------
   Future<void> _fetchPositions() async {
-    final url = Uri.parse("http://192.168.1.120/callapp/get_positions.php");
     try {
-      final response = await http.get(url);
-      final data = json.decode(response.body);
+      final posUrl = Uri.parse(
+        "http://10.35.112.138/callapp/get_positions.php",
+      );
+      final posResp = await http.get(posUrl);
+      print("Positions response: ${posResp.body}");
+      final posData = json.decode(posResp.body);
 
-      if (data['success'] == 1) {
-        setState(() {
-          _positions = List<Map<String, dynamic>>.from(data['data']);
-          _filteredPositions = List.from(_positions);
-          _loading = false;
-        });
-      } else {
-        setState(() => _loading = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error: ${data['message']}")));
+      List<Map<String, dynamic>> positions = [];
+      if (posData['success'] == 1) {
+        positions = List<Map<String, dynamic>>.from(
+          posData['data'],
+        ).map((p) => {...p, 'type': 'position'}).toList();
       }
+
+      setState(() {
+        _positions = positions;
+        _filteredPositions = List.from(_positions);
+        _loadingPositions = false;
+      });
     } catch (e) {
-      setState(() => _loading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Request failed: $e")));
+      setState(() => _loadingPositions = false);
+      print("Error fetching positions: $e");
     }
   }
 
-  void _filterPositions() {
-    final query = _positionSearchController.text.toLowerCase();
+  // ------------------ Fetch paths ------------------
+  Future<void> _fetchPaths() async {
+    try {
+      final pathUrl = Uri.parse("http://10.35.112.138/callapp/get_paths.php");
+      final pathResp = await http.get(pathUrl);
+      print("Paths response: ${pathResp.body}");
+      final pathData = json.decode(pathResp.body);
+
+      List<Map<String, dynamic>> paths = [];
+      if (pathData['success'] == true) {
+        paths = List<Map<String, dynamic>>.from(
+          pathData['data'],
+        ).map((p) => {...p, 'type': 'path'}).toList();
+      }
+
+      setState(() {
+        _paths = paths;
+        _filteredPaths = List.from(_paths);
+        _loadingPaths = false;
+      });
+    } catch (e) {
+      setState(() => _loadingPaths = false);
+      print("Error fetching paths: $e");
+    }
+  }
+
+  // ------------------ Filter ------------------
+  void _filterItems() {
+    final query = _searchController.text.toLowerCase();
+
     setState(() {
-      _filteredPositions = _positions.where((pos) {
-        final pseudo = pos['pseudo']?.toLowerCase() ?? '';
-        final numero = pos['numero']?.toLowerCase() ?? '';
+      _filteredPositions = _positions.where((item) {
+        final pseudo = item['pseudo']?.toLowerCase() ?? '';
+        final numero = item['numero']?.toLowerCase() ?? '';
         return pseudo.contains(query) || numero.contains(query);
       }).toList();
+
+      _filteredPaths = _paths.where((item) {
+        final name = item['name']?.toLowerCase() ?? '';
+        return name.contains(query);
+      }).toList();
     });
-  }
-
-  // ------------------ Delete position ------------------
-  Future<void> _deletePosition(int id) async {
-    final url = Uri.parse("http://192.168.1.120/callapp/delete_position.php");
-
-    try {
-      final response = await http.post(
-        url,
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"id": id}),
-      );
-
-      print("Delete response: ${response.body}");
-
-      final data = json.decode(response.body);
-
-      if (data['success'] == true) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Position deleted")));
-        await _fetchPositions(); // Refresh list
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error: ${data['message']}")));
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Request failed: $e")));
-    }
   }
 
   // ------------------ Share position ------------------
@@ -156,7 +151,7 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
-              controller: _contactSearchController,
+              controller: _searchController,
               decoration: const InputDecoration(
                 prefixIcon: Icon(Icons.search),
                 hintText: "Search contact...",
@@ -191,7 +186,7 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
                               ),
                             );
 
-                            Navigator.pop(context); // close dialog
+                            Navigator.pop(context);
                           },
                         );
                       },
@@ -209,6 +204,35 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
     );
   }
 
+  // ------------------ Open MapScreen ------------------
+  void _openItem(Map<String, dynamic> item) {
+    if (item['type'] == 'position') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MapScreen(
+            latitude: double.parse(item['latitude']),
+            longitude: double.parse(item['longitude']),
+            isFromSavedList: true,
+          ),
+        ),
+      );
+    } else if (item['type'] == 'path') {
+      final id = int.parse(item['id'].toString());
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MapScreen(
+            latitude: 0,
+            longitude: 0,
+            isFromSavedList: true,
+            pathId: id,
+          ),
+        ),
+      );
+    }
+  }
+
   // ------------------ Build UI ------------------
   @override
   Widget build(BuildContext context) {
@@ -217,170 +241,107 @@ class _SavedPositionsScreenState extends State<SavedPositionsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Top Bar
-            Container(
-              margin: const EdgeInsets.all(12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 2,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    "Saved Positions",
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
+            // Tabs
+            TabBar(
+              controller: _tabController,
+              labelColor: Colors.blue,
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: Colors.blue,
+              tabs: const [
+                Tab(text: "Positions"),
+                Tab(text: "Paths"),
+              ],
             ),
 
-            // Search for Positions
+            // Search bar
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.all(12),
               child: TextField(
-                controller: _positionSearchController,
+                controller: _searchController,
                 decoration: InputDecoration(
-                  hintText: "Search positions...",
+                  hintText: "Search...",
                   prefixIcon: const Icon(Icons.search),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 0,
-                    horizontal: 12,
                   ),
                 ),
               ),
             ),
 
             Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _filteredPositions.isEmpty
-                  ? const Center(child: Text("No saved positions"))
-                  : ListView.builder(
-                      itemCount: _filteredPositions.length,
-                      itemBuilder: (context, index) {
-                        final pos = _filteredPositions[index];
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                            vertical: 6,
-                            horizontal: 12,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: ListTile(
-                            leading: const Icon(
-                              Icons.location_on,
-                              color: Colors.red,
-                            ),
-                            title: Text(pos['pseudo'] ?? 'Unknown'),
-                            subtitle: Text(
-                              "Num: ${pos['numero']}\nLat: ${pos['latitude']}, Lon: ${pos['longitude']}",
-                            ),
-                            isThreeLine: true,
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.share,
-                                    color: Colors.green,
-                                  ),
-                                  tooltip: "Share Position",
-                                  onPressed: () {
-                                    _showShareDialog(
-                                      double.parse(pos['latitude']),
-                                      double.parse(pos['longitude']),
-                                    );
-                                  },
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _loadingPositions
+                      ? const Center(child: CircularProgressIndicator())
+                      : _filteredPositions.isEmpty
+                      ? const Center(child: Text("No saved positions"))
+                      : ListView.builder(
+                          itemCount: _filteredPositions.length,
+                          itemBuilder: (context, index) {
+                            final item = _filteredPositions[index];
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                vertical: 6,
+                                horizontal: 12,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: ListTile(
+                                leading: const Icon(
+                                  Icons.location_on,
+                                  color: Colors.red,
                                 ),
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                  ),
-                                  tooltip: "Delete Position",
-                                  onPressed: () async {
-                                    final confirmed = await showDialog(
-                                      context: context,
-                                      builder: (context) => AlertDialog(
-                                        title: const Text("Confirm Delete"),
-                                        content: const Text(
-                                          "Are you sure you want to delete this position?",
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () => Navigator.of(
-                                              context,
-                                            ).pop(false),
-                                            child: const Text("Cancel"),
-                                          ),
-                                          TextButton(
-                                            onPressed: () =>
-                                                Navigator.of(context).pop(true),
-                                            child: const Text("Delete"),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                    if (confirmed == true) {
-                                      final id = int.tryParse(
-                                        pos['id'].toString(),
-                                      );
-                                      if (id != null) {
-                                        _deletePosition(id);
-                                      } else {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              "Invalid position ID",
-                                            ),
-                                          ),
-                                        );
-                                      }
-                                    }
-                                  },
+                                title: Text(item['pseudo'] ?? 'Unknown'),
+                                subtitle: Text(
+                                  "Num: ${item['numero']}\nLat: ${item['latitude']}, Lon: ${item['longitude']}",
                                 ),
-                                const Icon(Icons.arrow_forward_ios),
-                              ],
-                            ),
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => MapScreen(
-                                    latitude: double.parse(pos['latitude']),
-                                    longitude: double.parse(pos['longitude']),
-                                    isFromSavedList: true,
-                                  ),
+                                isThreeLine: true,
+                                trailing: const Icon(Icons.arrow_forward_ios),
+                                onTap: () => _openItem(item),
+                                onLongPress: () {
+                                  _showShareDialog(
+                                    double.parse(item['latitude']),
+                                    double.parse(item['longitude']),
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                  _loadingPaths
+                      ? const Center(child: CircularProgressIndicator())
+                      : _filteredPaths.isEmpty
+                      ? const Center(child: Text("No saved paths"))
+                      : ListView.builder(
+                          itemCount: _filteredPaths.length,
+                          itemBuilder: (context, index) {
+                            final item = _filteredPaths[index];
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                vertical: 6,
+                                horizontal: 12,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: ListTile(
+                                leading: const Icon(
+                                  Icons.timeline,
+                                  color: Colors.blue,
                                 ),
-                              );
-                            },
-                          ),
-                        );
-                      },
-                    ),
+                                title: Text(
+                                  item['name'] ?? 'Path ${item['id']}',
+                                ),
+                                trailing: const Icon(Icons.arrow_forward_ios),
+                                onTap: () => _openItem(item),
+                              ),
+                            );
+                          },
+                        ),
+                ],
+              ),
             ),
           ],
         ),
